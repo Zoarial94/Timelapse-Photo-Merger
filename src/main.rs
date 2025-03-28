@@ -1,13 +1,18 @@
 use magick_rust::magick_wand_genesis;
-use std::fs::DirEntry;
+use std::fs::{DirBuilder, DirEntry};
 use std::path::Path;
 use std::process::Command;
-use std::sync::Once;
+use std::sync::{LazyLock, Once};
 use std::env;
+use std::fmt::format;
+use magick_rust::CompressionType::Group4;
 use tokio::task;
 
 static START: Once = Once::new();
-static GROUP_SIZE: u8 = 3;
+static GROUP_SIZE: u8 = 2;
+static COMBINED_DIR: LazyLock<String> = LazyLock::new(|| {
+    format!("combined-{:01}", GROUP_SIZE)
+});
 
 struct ImageMerge {
     img_vec: Vec<DirEntry>,
@@ -41,7 +46,7 @@ impl ImageMerge {
         //fs::write("0.jpg", self.wand.evaluate_image(Mean, 0.0).unwrap()).expect("TODO: panic message");
 
         println!("Combining {:04}.jpg: {} ", counter, ret);
-        command.arg("-evaluate-sequence").arg("Mean").arg(format!("combined/{:04}.jpg", counter));
+        command.arg("-evaluate-sequence").arg("Mean").arg(format!("{}/{:04}.jpg", COMBINED_DIR.as_str(), counter));
 
         command.output().expect("TODO: panic message");
 
@@ -72,6 +77,10 @@ async fn main() {
     let mut image_merge = ImageMerge{
         img_vec: vec![],
     };
+    
+    if !std::fs::exists(COMBINED_DIR.as_str()).expect("TODO: panic message") {
+        std::fs::create_dir(COMBINED_DIR.as_str()).expect("TODO: panic message");
+    }
 
     for img in iter {
         if !image_merge.is_full() {
