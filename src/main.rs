@@ -1,9 +1,10 @@
-use magick_rust::{magick_wand_genesis};
+use circular_buffer::CircularBuffer;
+use magick_rust::magick_wand_genesis;
+use std::env;
 use std::path::Path;
 use std::process::Command;
-use std::sync::{LazyLock, Once};
-use std::env;
-use circular_buffer::CircularBuffer;
+use std::sync::{Arc, LazyLock, Once};
+use tokio::sync::Notify;
 use tokio::task;
 
 static START: Once = Once::new();
@@ -59,6 +60,8 @@ async fn main() {
         std::fs::create_dir(COMBINED_DIR.as_str()).expect("TODO: panic message");
     }
 
+    let notify = Arc::new(Notify::new());
+
     for img in iter {
         
         let file_name = img.unwrap().file_name().into_string().unwrap();
@@ -68,20 +71,20 @@ async fn main() {
             img_vec: img_buffer.iter().cloned().collect(), 
         };
 
-        {
-            println!("Queuing job {:04}", counter);
-            let handle = task::spawn_blocking( move || {
-                image_merge.process(counter);
-            });
-            threads.push(handle);
-            counter = counter + 1;
-        }
+        println!("Queuing job {:04}", counter);
+        let notify2 = notify.clone();
+        let handle = task::spawn_blocking( move || {
+            image_merge.process(counter);
+            notify2.notify_one();
+        });
+        threads.push(handle);
+        counter = counter + 1;
 
-        threads = threads.into_iter().filter( |t| {
-            !t.is_finished()
-        }).collect();
         if threads.len() >= MAX_OPERATIONS {
-            threads.get_mut(0).unwrap().await.expect("TODO: panic message");
+            notify.notified().await;
+            threads = threads.into_iter().filter( |t| {
+                !t.is_finished()
+            }).collect();
         }
         
         // if counter >= 300 {
