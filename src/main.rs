@@ -7,10 +7,12 @@ use circular_buffer::CircularBuffer;
 use tokio::task;
 
 static START: Once = Once::new();
-static GROUP_SIZE: u8 = 3;
+static GROUP_SIZE: usize = 3;
 static COMBINED_DIR: LazyLock<String> = LazyLock::new(|| {
     format!("combined-{:01}", GROUP_SIZE)
 });
+
+static MAX_OPERATIONS: usize = 24;
 
 struct ImageMerge {
     img_vec: Vec<String>,
@@ -44,7 +46,7 @@ async fn main() {
 
     let mut threads: Vec<_> = vec![];
     let mut counter = 0;
-    let mut img_buffer : CircularBuffer<{ GROUP_SIZE as usize }, String> = CircularBuffer::new();
+    let mut img_buffer : CircularBuffer<{ GROUP_SIZE }, String> = CircularBuffer::new();
 
     let path = env::args().skip(1).next().unwrap();
     let img_folder = Path::new(&path);
@@ -65,23 +67,33 @@ async fn main() {
         let mut image_merge = ImageMerge {
             img_vec: img_buffer.iter().cloned().collect(), 
         };
-        
-        println!("Queuing job {:04}", counter);
-        let handle = task::spawn(async move {
-            image_merge.process(counter);
-        });
-        threads.push(handle);
-        counter = counter + 1;
+
+        {
+            println!("Queuing job {:04}", counter);
+            let handle = task::spawn_blocking( move || {
+                image_merge.process(counter);
+            });
+            threads.push(handle);
+            counter = counter + 1;
+        }
+
+        threads = threads.into_iter().filter( |t| {
+            !t.is_finished()
+        }).collect();
+        if threads.len() >= MAX_OPERATIONS {
+            threads.get_mut(0).unwrap().await.expect("TODO: panic message");
+        }
         
         // if counter >= 300 {
         //     break
         // }
-        
-    }
 
-    // for handle in threads {
-    //     handle.await.unwrap();
-    // }
+    }
+    
+    for handle in threads {
+        handle.await.unwrap();
+    }
+    
     
 }
 
